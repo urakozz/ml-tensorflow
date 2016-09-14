@@ -2,11 +2,13 @@ from __future__ import print_function
 import collections
 import tensorflow as tf
 import numpy as np
+import datetime
+import json
 import zipfile
 import pandas as pd
 import os
 import shutil
-import http
+import http.server
 import matplotlib.pyplot as plt
 from scipy import ndimage
 from sklearn.utils import shuffle
@@ -17,6 +19,7 @@ from six.moves.urllib.request import urlretrieve
 from six.moves.urllib.parse import quote
 from sklearn import cross_validation
 from random import sample, choice
+import socketserver
 
 def wb(wshape=[None],bshape=[None], device='/cpu:0'):
     with tf.device(device):
@@ -85,7 +88,7 @@ with graph_con.as_default():
 
 
     #evaluation
-    out_eval = convNetModel(X_eval, True)
+    out_eval = convNetModel(X_eval)
 
 def img(image_file):
     rgb = ndimage.imread(image_file).astype(float)
@@ -96,20 +99,128 @@ pickle_file = "visualsearch_deep_ranking_embeddings.pickle"
 embeddings_np = pickle.load(open(pickle_file, 'rb'))
 sku_uniq = pickle.load(open("sku_uniq.pickle", 'rb'))
 
-with tf.Session(graph = graph_con) as session:
-    init_op = tf.initialize_all_variables()
-    saver = tf.train.Saver()
-    init_op.run()
-    # Restore variables from disk.
-    saver.restore(session, "visualsearch_deep_ranking.ckpt")
 
-    img_ = img(os.path.join("images_processed", "0040c2f8306361fabd4308ff9a01efb7"+".jpg"))
 
-    feed_dict = {X_eval:[img_]}
-    check_embeddings = session.run(out_eval, feed_dict=feed_dict)
-    print("> check_embeddings.shape", check_embeddings.shape)
-    print("> embeddings_np.T", embeddings_np.T.shape)
-    similarity = np.dot(check_embeddings, embeddings_np.T)
-    for i, sim in enumerate(similarity):
-        closest = sim.argsort()[-10:]
-        print("> closest i ",i," >>", closest, [sku_uniq[i] for i in closest])
+class DeepRankingModel(object):
+    def __init__(self, image_size = 128, num_channels = 3, margin = 0.1, batch_size = 16, embedding_size = 4096, l2_reg_norm = 5e-5):
+        self.image_size = image_size
+        self.num_channels = num_channels
+        self.margin = margin
+        self.batch_size = batch_size
+        self.embedding_size = embedding_size
+        self.l2_reg_norm = l2_reg_norm
+
+
+    def wb(wshape=[None],bshape=[None], device='/cpu:0'):
+        with tf.device(device):
+            w = tf.get_variable("w", wshape, initializer=tf.truncated_normal_initializer(stddev=0.1))
+            b = tf.get_variable('b', bshape, initializer=tf.constant_initializer(0.0))
+            print(w.name, w.device, w.get_shape().as_list())
+            print(b.name, w.device, b.get_shape().as_list())
+            return w, b
+
+
+    def register_variables(self):
+        shape = (self.batch_size, self.image_size, self.image_size, self.num_channels)
+        self.X_q   = tf.placeholder(tf.float32, shape=shape)
+        self.X_pos = tf.placeholder(tf.float32, shape=shape)
+        self.X_neg = tf.placeholder(tf.float32, shape=shape)
+
+        self.X_eval = tf.placeholder(tf.float32, shape=(None, self.image_size, self.image_size, self.num_channels))
+
+
+        # Variables.
+        with tf.variable_scope("convNetConvLayer1"):
+            self.layer1_weights, self.layer1_biases = self.wb([3, 3, 3, 16], [16])
+        with tf.variable_scope("convNetConvLayer2"):
+            self.layer2_weights,self.layer2_biases = self.wb([3, 3, 16, 64], [64])
+        with tf.variable_scope("convNetFCLayer3"):
+            self.layer3_weights, self.layer3_biases = self.wb(
+                [self.image_size // 4 * self.image_size // 4 * 64 , self.embedding_size], [self.embedding_size])
+
+    def convNetModel(data, train=False):
+        print("data_model", data.get_shape().as_list())
+        conv1 = tf.nn.conv2d(data, self.layer1_weights, [1, 1, 1, 1], padding='SAME')
+        relu1 = tf.nn.relu(tf.nn.bias_add(conv1, self.layer1_biases))
+        pool1 = tf.nn.max_pool(relu1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+        #pool1 = tf.nn.dropout(pool1, 0.5)
+        #pool1 = tf.nn.lrn(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75)
+        #print("hidden1", pool1.get_shape().as_list())
+
+        conv2 = tf.nn.conv2d(pool1, self.layer2_weights, [1, 1, 1, 1], padding='SAME')
+        relu2 = tf.nn.relu(tf.nn.bias_add(conv2, self.layer2_biases))
+        pool2 = tf.nn.max_pool(relu2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
+        #pool2 = tf.nn.lrn(pool2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,name='norm2')
+        if train:
+            pool2 = tf.nn.dropout(pool2, 0.5)
+        #print(pool2.name, pool2.get_shape().as_list())
+
+        shape = pool2.get_shape().as_list()
+        reshape = tf.reshape(pool2, [-1, np.prod(shape[1:])])
+        hidden = tf.nn.relu(tf.matmul(reshape, self.layer3_weights) + self.layer3_biases, name='convNetModel_out')
+        print(hidden.name, hidden.get_shape().as_list())
+
+        return hidden
+
+class DeepRankingModelEvaluation(DeepRankingModel):
+
+    def initialize_graph(self):
+        graph_con = tf.Graph()
+        with graph_con.as_default():
+            self.register_variables()
+            self.out_eval = convNetModel(X_eval)
+        self.graph = graph_con
+
+if __name__ == '__main__':
+    PORT = 8000
+
+
+
+    t0 = datetime.datetime.now()
+
+    with tf.Session(graph = graph_con) as session:
+        init_op = tf.initialize_all_variables()
+        saver = tf.train.Saver()
+        init_op.run()
+        # Restore variables from disk.
+        saver.restore(session, "visualsearch_deep_ranking.ckpt")
+        t1 = datetime.datetime.now()
+        print((t1-t0).total_seconds()*1000, "to init model")
+
+        img_ = img(os.path.join("images_processed", "0040c2f8306361fabd4308ff9a01efb7"+".jpg"))
+
+
+
+        class S(http.server.BaseHTTPRequestHandler):
+            def _set_headers(self):
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+
+            def do_GET(self):
+                self._set_headers()
+                self.wfile.write("\"hi!\"".encode())
+
+            def do_HEAD(self):
+                self._set_headers()
+
+            def do_POST(self):
+                trs = datetime.datetime.now()
+                feed_dict = {X_eval:[img_]}
+                check_embeddings = session.run(out_eval, feed_dict=feed_dict)
+                print("> check_embeddings.shape", check_embeddings.shape)
+                print("> embeddings_np.T", embeddings_np.T.shape)
+                similarity = np.dot(check_embeddings, embeddings_np.T)
+                sim = similarity[0]
+                closest = sim.argsort()[-10:]
+                closest_sku = [sku_uniq[i] for i in closest]
+                print("> closest "," >>", closest, closest_sku)
+
+                print((datetime.datetime.now()-trs).total_seconds()*1000, "to evaluate")
+
+                self._set_headers()
+                self.wfile.write(json.dumps(closest_sku).encode())
+
+        httpd = http.server.HTTPServer(('', PORT), S)
+        print("serving at port", PORT)
+        httpd.serve_forever()
