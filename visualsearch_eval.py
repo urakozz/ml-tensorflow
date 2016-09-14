@@ -178,21 +178,21 @@ if __name__ == '__main__':
 
     t0 = datetime.datetime.now()
 
-    with tf.Session(graph = graph_con) as session:
+    with tf.Session(graph = graph_con) as sess:
         init_op = tf.initialize_all_variables()
         saver = tf.train.Saver()
         init_op.run()
         # Restore variables from disk.
-        saver.restore(session, "visualsearch_deep_ranking.ckpt")
+        saver.restore(sess, "visualsearch_deep_ranking.ckpt")
         t1 = datetime.datetime.now()
         print((t1-t0).total_seconds()*1000, "to init model")
 
-        img_ = img(os.path.join("images_processed", "0040c2f8306361fabd4308ff9a01efb7"+".jpg"))
+        img__ = img(os.path.join("images_processed", "0040c2f8306361fabd4308ff9a01efb7"+".jpg"))
 
 
 
         class S(http.server.BaseHTTPRequestHandler):
-            def _set_headers(self):
+            def _set_headers(self, code=200):
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
@@ -206,8 +206,23 @@ if __name__ == '__main__':
 
             def do_POST(self):
                 trs = datetime.datetime.now()
-                feed_dict = {X_eval:[img_]}
-                check_embeddings = session.run(out_eval, feed_dict=feed_dict)
+                length = 0
+                if self.headers['Content-Length']:
+                    length = int(self.headers['Content-Length'])
+                if length == 0:
+                    self._set_headers(400)
+                    self.wfile.write(json.dumps({"error":"no data sent"}).encode())
+                    return
+                print("len", length)
+                data = self.rfile.read(length)
+
+                img_ = tf.image.decode_jpeg(data)
+                img_ = tf.image.resize_image_with_crop_or_pad(img_, 128, 128)
+                img_ = tf.cast(img_, tf.float32)
+                img_ = (img_ - 255/2) / 255
+
+                feed_dict = {X_eval:[sess.run(img_)]}
+                check_embeddings = sess.run(out_eval, feed_dict=feed_dict)
                 print("> check_embeddings.shape", check_embeddings.shape)
                 print("> embeddings_np.T", embeddings_np.T.shape)
                 similarity = np.dot(check_embeddings, embeddings_np.T)
