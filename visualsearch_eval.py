@@ -65,21 +65,25 @@ with graph_con.as_default():
         conv1 = tf.nn.conv2d(data, layer1_weights, [1, 1, 1, 1], padding='SAME')
         relu1 = tf.nn.relu(tf.nn.bias_add(conv1, layer1_biases))
         pool1 = tf.nn.max_pool(relu1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
-        #pool1 = tf.nn.dropout(pool1, 0.5)
-        #pool1 = tf.nn.lrn(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75)
+        #         if train:
+        #              pool1 = tf.nn.dropout(pool1, 0.5)
+        pool1 = tf.nn.lrn(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,name='norm1')
         #print("hidden1", pool1.get_shape().as_list())
 
         conv2 = tf.nn.conv2d(pool1, layer2_weights, [1, 1, 1, 1], padding='SAME')
         relu2 = tf.nn.relu(tf.nn.bias_add(conv2, layer2_biases))
         pool2 = tf.nn.max_pool(relu2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME')
-        #pool2 = tf.nn.lrn(pool2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,name='norm2')
-        if train:
-            pool2 = tf.nn.dropout(pool2, 0.5)
+        pool2 = tf.nn.lrn(pool2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,name='norm2')
+        #         if train:
+        #              pool2 = tf.nn.dropout(pool2, 0.5)
         #print(pool2.name, pool2.get_shape().as_list())
 
         shape = pool2.get_shape().as_list()
         reshape = tf.reshape(pool2, [-1, np.prod(shape[1:])])
+        if train:
+            reshape = tf.nn.dropout(reshape, 0.5)
         hidden = tf.nn.relu(tf.matmul(reshape, layer3_weights) + layer3_biases, name='convNetModel_out')
+        hidden = tf.nn.l2_normalize(hidden,1, name='convNetModel_out_norm')
         print(hidden.name, hidden.get_shape().as_list())
 
         #         hidden = tf.matmul(hidden, layer4_weights) + layer4_biases
@@ -98,6 +102,7 @@ def img(image_file):
 pickle_file = "visualsearch_deep_ranking_embeddings.pickle"
 embeddings_np = pickle.load(open(pickle_file, 'rb'))
 sku_uniq = pickle.load(open("sku_uniq.pickle", 'rb'))
+print("> embeddings_np.T", embeddings_np.T.shape)
 
 
 
@@ -224,7 +229,6 @@ if __name__ == '__main__':
                 feed_dict = {X_eval:[sess.run(img_)]}
                 check_embeddings = sess.run(out_eval, feed_dict=feed_dict)
                 print("> check_embeddings.shape", check_embeddings.shape)
-                print("> embeddings_np.T", embeddings_np.T.shape)
                 similarity = np.dot(check_embeddings, embeddings_np.T)
                 sim = similarity[0]
                 closest = sim.argsort()[-10:]
