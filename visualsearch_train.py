@@ -54,7 +54,7 @@ print(csv["category"].value_counts()[:20])
 
 
 
-csvCat = csv[csv["category"].isin([177877, 161314, 161826, 161342, 161270])]  # 177877,161314, 161826, 161342, 161270
+csvCat = csv[csv["category"].isin([1177877,161314, 161826, 161342, 161270])]  # 177877,161314, 161826, 161342, 161270
 del (csv)
 print(csvCat)
 print(len(csvCat))
@@ -152,8 +152,6 @@ sku_cat_dict = dict()
 for h, row in csvCat.iterrows():
     sku_cat_dict[row['sku']] = row["category"]
 
-with open("sku_uniq.pickle", 'wb') as f:
-    pickle.dump(sku_uniq, f, pickle.HIGHEST_PROTOCOL)
 with open("sku_uniq.pickle", 'wb') as f:
     pickle.dump(sku_uniq, f, pickle.HIGHEST_PROTOCOL)
 
@@ -362,7 +360,7 @@ num_channels = 3
 margin = 0.6
 train_size = tg.total_triplets()
 batch_size = 16
-embedding_size = 4096
+embedding_size = 1024
 l2_reg_norm = 5e-4
 
 tf.reset_default_graph()
@@ -450,14 +448,13 @@ with graph_con.as_default():
         tf.scalar_summary('loss_l2', loss_l2)
         tf.scalar_summary('loss', loss)
 
-        #     with tf.device('/cpu:0'):
-        # Optimizer.
-        global_step = tf.Variable(0, trainable=False)
-        learn_rate  = tf.train.exponential_decay(.01, global_step*batch_size, train_size, 0.5, staircase=True)
-        tf.scalar_summary('learning_rate', learn_rate)
-        optimizer = tf.train.AdamOptimizer(learn_rate).minimize(loss, global_step=global_step, name="AdamOptimizer")
-        print(optimizer.name, optimizer.device)
-        # optimizer   = tf.train.MomentumOptimizer(learn_rate, 0.9).minimize(loss, global_step=global_step)
+    # Optimizer.
+    global_step = tf.Variable(0, trainable=False)
+    learn_rate  = tf.train.exponential_decay(.01, global_step*batch_size, train_size, 0.5, staircase=True)
+    tf.scalar_summary('learning_rate', learn_rate)
+    optimizer = tf.train.AdamOptimizer(learn_rate).minimize(loss, global_step=global_step, name="AdamOptimizer")
+    print(optimizer.name, optimizer.device)
+    # optimizer   = tf.train.MomentumOptimizer(learn_rate, 0.9).minimize(loss, global_step=global_step)
 
 num_steps = (train_size // batch_size) * 5
 print("Steps", num_steps)
@@ -551,8 +548,9 @@ with tf.Session(graph=graph_con) as session:
 
     print("saved")
 
-pickle_file = "visualsearch_deep_ranking_embeddings.pickle"
+pickle_file = "visualsearch_deep_ranking_embeddings_c5.pickle"
 embeddings_np = pickle.load(open(pickle_file, 'rb'))
+embeddings_np = np.nan_to_num(embeddings_np)
 
 
 def plot_with_labels(low_dim_embs, labels, filename='tsne_c5s5r5.png'):

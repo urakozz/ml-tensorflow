@@ -99,9 +99,9 @@ def img(image_file):
     rgb = (rgb - 255.0/2) / 255.0
     return rgb
 
-pickle_file = "visualsearch_deep_ranking_embeddings.pickle"
+pickle_file = "visualsearch_deep_ranking_embeddings_c5.pickle"
 embeddings_np = pickle.load(open(pickle_file, 'rb'))
-sku_uniq = pickle.load(open("sku_uniq.pickle", 'rb'))
+sku_uniq = pickle.load(open("sku_uniq_c5.pickle", 'rb'))
 print("> embeddings_np.T", embeddings_np.T.shape)
 
 
@@ -116,7 +116,7 @@ class DeepRankingModel(object):
         self.l2_reg_norm = l2_reg_norm
 
 
-    def wb(wshape=[None],bshape=[None], device='/cpu:0'):
+    def wb(self, wshape=[None],bshape=[None], device='/cpu:0'):
         with tf.device(device):
             w = tf.get_variable("w", wshape, initializer=tf.truncated_normal_initializer(stddev=0.1))
             b = tf.get_variable('b', bshape, initializer=tf.constant_initializer(0.0))
@@ -143,7 +143,7 @@ class DeepRankingModel(object):
             self.layer3_weights, self.layer3_biases = self.wb(
                 [self.image_size // 4 * self.image_size // 4 * 64 , self.embedding_size], [self.embedding_size])
 
-    def convNetModel(data, train=False):
+    def convNetModel(self,data, train=False):
         print("data_model", data.get_shape().as_list())
         conv1 = tf.nn.conv2d(data, self.layer1_weights, [1, 1, 1, 1], padding='SAME')
         relu1 = tf.nn.relu(tf.nn.bias_add(conv1, self.layer1_biases))
@@ -188,7 +188,7 @@ if __name__ == '__main__':
         saver = tf.train.Saver()
         init_op.run()
         # Restore variables from disk.
-        saver.restore(sess, "visualsearch_deep_ranking.ckpt")
+        saver.restore(sess, "visualsearch_deep_ranking_c5.ckpt")
         t1 = datetime.datetime.now()
         print((t1-t0).total_seconds()*1000, "to init model")
 
